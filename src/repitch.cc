@@ -55,7 +55,6 @@ typedef struct {
 typedef struct {
 	/* ports */
 	const LV2_Atom_Sequence* control;
-	float* p_speed;
 	float* p_in;
 	float* p_out;
 
@@ -209,12 +208,9 @@ connect_port (LV2_Handle instance,
 			self->control = (const LV2_Atom_Sequence*)data;
 			break;
 		case 1:
-			self->p_speed = (float*)data;
-			break;
-		case 2:
 			self->p_in = (float*)data;
 			break;
-		case 3:
+		case 2:
 			self->p_out = (float*)data;
 			break;
 		default:
@@ -249,7 +245,6 @@ run (LV2_Handle instance, uint32_t n_samples)
 	}
 
 	self->stretcher->setPitchScale (1.0 / speed);
-	//self->stretcher->setPitchScale (*(self->p_speed));
 
 	//self->stretcher->getLatency ();
 	self->stretcher->process (&self->p_in, n_samples, false);
