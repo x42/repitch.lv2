@@ -100,6 +100,7 @@ get_from_ring_buffer(RingBuffer* sb, float* dst, size_t len)
 	const uint32_t pos = sb->read_pos;
 	if (pos < sb->write_pos && pos > sb->write_pos-len) {
 		const uint32_t d = len-(sb->write_pos-pos);
+		memset(dst, 0, d*sizeof(float));
 		memcpy(dst+d, sb->data+pos, (len-d)*sizeof(float));
 		sb->read_pos = (pos + len-d) & RingBuffer::mask;
 		return;
