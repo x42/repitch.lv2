@@ -32,7 +32,89 @@
 #include "lv2/lv2plug.in/ns/ext/time/time.h"
 #include <lv2/lv2plug.in/ns/ext/urid/urid.h>
 
-#include <rubberband/RubberBandStretcher.h> 
+#include <rubberband/RubberBandStretcher.h>
+
+
+typedef struct {
+	enum { length = 8192, mask = length - 1 };
+
+	float* data;
+	size_t write_pos, read_pos;
+} RingBuffer;
+
+static RingBuffer*
+new_ring_buffer()
+{
+	float* data = (float*)calloc(RingBuffer::length, sizeof(float));
+	if (!data) {
+		return NULL;
+	}
+	RingBuffer* sb = (RingBuffer*)malloc(sizeof(RingBuffer));
+	if (!sb) {
+		return NULL;
+	}
+	sb->data = data;
+	sb->write_pos = 0;
+	sb->read_pos = 0;
+	return sb;
+}
+
+static void
+delete_ring_buffer(RingBuffer* sb)
+{
+	free(sb->data);
+	free(sb);
+}
+
+static void
+reset_ring_buffer(RingBuffer* sb)
+{
+	bzero(sb->data, RingBuffer::length*sizeof(float));
+	sb->read_pos = 0;
+	sb->write_pos = 0;
+}
+
+static void
+put_to_ring_buffer(RingBuffer* sb, const float* data, size_t len)
+{
+	assert (len <= RingBuffer::length);
+
+	const size_t c = RingBuffer::length - sb->write_pos;
+	if (c >= len) {
+		memcpy (sb->data + sb->write_pos, data, len*sizeof(float));
+		sb->write_pos = (sb->write_pos + len) & RingBuffer::mask;
+	} else {
+		memcpy (sb->data + sb->write_pos, data, c*sizeof(float));
+		memcpy (sb->data, data+c, (len-c)*sizeof(float));
+		sb->write_pos = len-c;
+	}
+}
+
+static void
+get_from_ring_buffer(RingBuffer* sb, float* dst, size_t len)
+{
+	if (sb->write_pos == sb->read_pos) {
+		memset(dst, 0, len*sizeof(float));
+		return;
+	}
+	const uint32_t pos = sb->read_pos;
+	if (pos < sb->write_pos && pos > sb->write_pos-len) {
+		const uint32_t d = len-(sb->write_pos-pos);
+		memcpy(dst+d, sb->data+pos, (len-d)*sizeof(float));
+		sb->read_pos = (pos + len-d) & RingBuffer::mask;
+		return;
+	}
+	if (pos+len > RingBuffer::length) {
+		const size_t c = RingBuffer::length-pos;
+		memcpy(dst, sb->data+pos, c*sizeof(float));
+		memcpy(dst+c, sb->data, (len-c)*sizeof(float));
+		sb->read_pos = (len-c);
+	} else {
+		memcpy(dst, sb->data+pos, len*sizeof(float));
+		sb->read_pos = (pos + len) & RingBuffer::mask;
+	}
+}
+
 
 typedef struct {
 	LV2_URID atom_Blank;
@@ -74,6 +156,9 @@ typedef struct {
 
 	/* Settings */
 	double sample_rate;
+
+	RingBuffer* ring_buffer;
+	float* retrieve_buffer;
 
 	RubberBand::RubberBandStretcher* stretcher;
 } RePitch;
@@ -190,6 +275,9 @@ instantiate (const LV2_Descriptor*     descriptor,
 
 	self->sample_rate = rate;
 
+	self->ring_buffer = new_ring_buffer();
+	self->retrieve_buffer = (float*)malloc(RingBuffer::length*sizeof(float));
+
 	self->stretcher = new RubberBand::RubberBandStretcher (rate, 1, RubberBand::RubberBandStretcher::OptionProcessRealTime );
 	//self->stretcher->setDebugLevel(3);
 
@@ -218,6 +306,14 @@ connect_port (LV2_Handle instance,
 	}
 }
 
+static void
+activate (LV2_Handle instance)
+{
+	RePitch* self = (RePitch*)instance;
+
+	reset_ring_buffer (self->ring_buffer);
+	bzero (self->retrieve_buffer, RingBuffer::length*sizeof(float));
+}
 
 static void
 run (LV2_Handle instance, uint32_t n_samples)
@@ -247,13 +343,28 @@ run (LV2_Handle instance, uint32_t n_samples)
 	self->stretcher->setPitchScale (1.0 / speed);
 
 	//self->stretcher->getLatency ();
-	self->stretcher->process (&self->p_in, n_samples, false);
+	uint32_t processed = 0;
+	const float* proc_ptr = self->p_in;
 
-	if (self->stretcher->available () < n_samples) {
-		memset (self->p_out, 0, n_samples * sizeof (float));
-	} else {
-		self->stretcher->retrieve (&self->p_out, n_samples);
+	while (processed < n_samples) {
+		uint32_t in_chunk_size = self->stretcher->getSamplesRequired();
+		uint32_t samples_left = n_samples-processed;
+
+		if (samples_left < in_chunk_size) {
+			in_chunk_size = samples_left;
+		}
+
+		self->stretcher->process(&proc_ptr, in_chunk_size, 0);
+
+		processed += in_chunk_size;
+		proc_ptr += in_chunk_size;
+
+		const uint32_t avail = self->stretcher->available();
+		const uint32_t out_chunk_size = self->stretcher->retrieve(&self->retrieve_buffer, avail);
+		put_to_ring_buffer(self->ring_buffer, self->retrieve_buffer, out_chunk_size);
 	}
+
+	get_from_ring_buffer(self->ring_buffer, self->p_out, n_samples);
 
 	/* keep track of host position.. */
 	if (self->host_info) {
@@ -267,6 +378,8 @@ static void
 cleanup (LV2_Handle instance)
 {
 	RePitch* self = (RePitch*)instance;
+	delete_ring_buffer(self->ring_buffer);
+	free(self->retrieve_buffer);
 	delete self->stretcher;
 	free (instance);
 }
@@ -281,7 +394,7 @@ static const LV2_Descriptor descriptor = {
 	REPITCH_URI,
 	instantiate,
 	connect_port,
-	NULL,
+	activate,
 	run,
 	NULL,
 	cleanup,
