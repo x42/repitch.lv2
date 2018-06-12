@@ -18,104 +18,103 @@
 
 #define REPITCH_URI "http://gareus.org/oss/lv2/repitch"
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdint.h>
 #include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include <lv2/lv2plug.in/ns/lv2core/lv2.h>
+#include "lv2/lv2plug.in/ns/ext/time/time.h"
 #include <lv2/lv2plug.in/ns/ext/atom/atom.h>
 #include <lv2/lv2plug.in/ns/ext/atom/forge.h>
 #include <lv2/lv2plug.in/ns/ext/log/logger.h>
 #include <lv2/lv2plug.in/ns/ext/midi/midi.h>
-#include "lv2/lv2plug.in/ns/ext/time/time.h"
 #include <lv2/lv2plug.in/ns/ext/urid/urid.h>
+#include <lv2/lv2plug.in/ns/lv2core/lv2.h>
 
 #include <rubberband/RubberBandStretcher.h>
 
-
 typedef struct {
-	enum { length = 8192, mask = length - 1 };
+	enum { length = 8192,
+	       mask   = length - 1 };
 
 	float* data;
 	size_t write_pos, read_pos;
 } RingBuffer;
 
 static RingBuffer*
-new_ring_buffer()
+new_ring_buffer ()
 {
-	float* data = (float*)calloc(RingBuffer::length, sizeof(float));
+	float* data = (float*)calloc (RingBuffer::length, sizeof (float));
 	if (!data) {
 		return NULL;
 	}
-	RingBuffer* sb = (RingBuffer*)malloc(sizeof(RingBuffer));
+	RingBuffer* sb = (RingBuffer*)malloc (sizeof (RingBuffer));
 	if (!sb) {
 		return NULL;
 	}
-	sb->data = data;
+	sb->data      = data;
 	sb->write_pos = 0;
-	sb->read_pos = 0;
+	sb->read_pos  = 0;
 	return sb;
 }
 
 static void
-delete_ring_buffer(RingBuffer* sb)
+delete_ring_buffer (RingBuffer* sb)
 {
-	free(sb->data);
-	free(sb);
+	free (sb->data);
+	free (sb);
 }
 
 static void
-reset_ring_buffer(RingBuffer* sb)
+reset_ring_buffer (RingBuffer* sb)
 {
-	bzero(sb->data, RingBuffer::length*sizeof(float));
-	sb->read_pos = 0;
+	bzero (sb->data, RingBuffer::length * sizeof (float));
+	sb->read_pos  = 0;
 	sb->write_pos = 0;
 }
 
 static void
-put_to_ring_buffer(RingBuffer* sb, const float* data, size_t len)
+put_to_ring_buffer (RingBuffer* sb, const float* data, size_t len)
 {
 	assert (len <= RingBuffer::length);
 
 	const size_t c = RingBuffer::length - sb->write_pos;
 	if (c >= len) {
-		memcpy (sb->data + sb->write_pos, data, len*sizeof(float));
+		memcpy (sb->data + sb->write_pos, data, len * sizeof (float));
 		sb->write_pos = (sb->write_pos + len) & RingBuffer::mask;
 	} else {
-		memcpy (sb->data + sb->write_pos, data, c*sizeof(float));
-		memcpy (sb->data, data+c, (len-c)*sizeof(float));
-		sb->write_pos = len-c;
+		memcpy (sb->data + sb->write_pos, data, c * sizeof (float));
+		memcpy (sb->data, data + c, (len - c) * sizeof (float));
+		sb->write_pos = len - c;
 	}
 }
 
 static void
-get_from_ring_buffer(RingBuffer* sb, float* dst, size_t len)
+get_from_ring_buffer (RingBuffer* sb, float* dst, size_t len)
 {
 	if (sb->write_pos == sb->read_pos) {
-		memset(dst, 0, len*sizeof(float));
+		memset (dst, 0, len * sizeof (float));
 		return;
 	}
 	const uint32_t pos = sb->read_pos;
-	if (pos < sb->write_pos && pos > sb->write_pos-len) {
-		const uint32_t d = len-(sb->write_pos-pos);
-		memset(dst, 0, d*sizeof(float));
-		memcpy(dst+d, sb->data+pos, (len-d)*sizeof(float));
-		sb->read_pos = (pos + len-d) & RingBuffer::mask;
+	if (pos < sb->write_pos && pos > sb->write_pos - len) {
+		const uint32_t d = len - (sb->write_pos - pos);
+		memset (dst, 0, d * sizeof (float));
+		memcpy (dst + d, sb->data + pos, (len - d) * sizeof (float));
+		sb->read_pos = (pos + len - d) & RingBuffer::mask;
 		return;
 	}
-	if (pos+len > RingBuffer::length) {
-		const size_t c = RingBuffer::length-pos;
-		memcpy(dst, sb->data+pos, c*sizeof(float));
-		memcpy(dst+c, sb->data, (len-c)*sizeof(float));
-		sb->read_pos = (len-c);
+	if (pos + len > RingBuffer::length) {
+		const size_t c = RingBuffer::length - pos;
+		memcpy (dst, sb->data + pos, c * sizeof (float));
+		memcpy (dst + c, sb->data, (len - c) * sizeof (float));
+		sb->read_pos = (len - c);
 	} else {
-		memcpy(dst, sb->data+pos, len*sizeof(float));
+		memcpy (dst, sb->data + pos, len * sizeof (float));
 		sb->read_pos = (pos + len) & RingBuffer::mask;
 	}
 }
-
 
 typedef struct {
 	LV2_URID atom_Blank;
@@ -128,26 +127,26 @@ typedef struct {
 typedef struct {
 	/* ports */
 	const LV2_Atom_Sequence* control;
-	float* p_in;
-	float* p_out;
+	float*                   p_in;
+	float*                   p_out;
 
 	RePitchURIs uris;
 
 	/* LV2 Output */
-	LV2_Log_Log* log;
+	LV2_Log_Log*   log;
 	LV2_Log_Logger logger;
 
 	/* Host Time */
-	float    host_bpm;
-	double   bar_beats;
-	float    host_speed;
-	int      host_div;
+	float  host_bpm;
+	double bar_beats;
+	float  host_speed;
+	int    host_div;
 
 	/* Settings */
 	double sample_rate;
 
 	RingBuffer* ring_buffer;
-	float* retrieve_buffer;
+	float*      retrieve_buffer;
 
 	RubberBand::RubberBandStretcher* stretcher;
 } RePitch;
@@ -160,11 +159,11 @@ typedef struct {
 static void
 map_uris (LV2_URID_Map* map, RePitchURIs* uris)
 {
-	uris->atom_Blank          = map->map (map->handle, LV2_ATOM__Blank);
-	uris->atom_Object         = map->map (map->handle, LV2_ATOM__Object);
-	uris->time_Position       = map->map (map->handle, LV2_TIME__Position);
-	uris->atom_Float          = map->map (map->handle, LV2_ATOM__Float);
-	uris->time_speed          = map->map (map->handle, LV2_TIME__speed);
+	uris->atom_Blank    = map->map (map->handle, LV2_ATOM__Blank);
+	uris->atom_Object   = map->map (map->handle, LV2_ATOM__Object);
+	uris->time_Position = map->map (map->handle, LV2_TIME__Position);
+	uris->atom_Float    = map->map (map->handle, LV2_ATOM__Float);
+	uris->time_speed    = map->map (map->handle, LV2_TIME__speed);
 }
 
 /**
@@ -179,12 +178,11 @@ update_position (RePitch* self, const LV2_Atom_Object* obj)
 	LV2_Atom* speed = NULL;
 
 	lv2_atom_object_get (
-			obj,
-			uris->time_speed, &speed,
-			NULL);
+	    obj,
+	    uris->time_speed, &speed,
+	    NULL);
 
-	if (speed && speed->type == uris->atom_Float)
-	{
+	if (speed && speed->type == uris->atom_Float) {
 		self->host_speed = ((LV2_Atom_Float*)speed)->body;
 	}
 }
@@ -199,11 +197,11 @@ instantiate (const LV2_Descriptor*     descriptor,
              const char*               bundle_path,
              const LV2_Feature* const* features)
 {
-	RePitch* self = (RePitch*)calloc (1, sizeof (RePitch));
-	LV2_URID_Map* map = NULL;
+	RePitch*      self = (RePitch*)calloc (1, sizeof (RePitch));
+	LV2_URID_Map* map  = NULL;
 
 	int i;
-	for (i=0; features[i]; ++i) {
+	for (i = 0; features[i]; ++i) {
 		if (!strcmp (features[i]->URI, LV2_URID__map)) {
 			map = (LV2_URID_Map*)features[i]->data;
 		} else if (!strcmp (features[i]->URI, LV2_LOG__log)) {
@@ -223,10 +221,10 @@ instantiate (const LV2_Descriptor*     descriptor,
 
 	self->sample_rate = rate;
 
-	self->ring_buffer = new_ring_buffer();
-	self->retrieve_buffer = (float*)malloc(RingBuffer::length*sizeof(float));
+	self->ring_buffer     = new_ring_buffer ();
+	self->retrieve_buffer = (float*)malloc (RingBuffer::length * sizeof (float));
 
-	self->stretcher = new RubberBand::RubberBandStretcher (rate, 1, RubberBand::RubberBandStretcher::OptionProcessRealTime );
+	self->stretcher = new RubberBand::RubberBandStretcher (rate, 1, RubberBand::RubberBandStretcher::OptionProcessRealTime);
 	//self->stretcher->setDebugLevel(3);
 
 	return (LV2_Handle)self;
@@ -260,7 +258,7 @@ activate (LV2_Handle instance)
 	RePitch* self = (RePitch*)instance;
 
 	reset_ring_buffer (self->ring_buffer);
-	bzero (self->retrieve_buffer, RingBuffer::length*sizeof(float));
+	bzero (self->retrieve_buffer, RingBuffer::length * sizeof (float));
 }
 
 static void
@@ -293,36 +291,36 @@ run (LV2_Handle instance, uint32_t n_samples)
 	// TODO report latency, include ringbuffer offset
 	//self->stretcher->getLatency ();
 
-	uint32_t processed = 0;
-	const float* proc_ptr = self->p_in;
+	uint32_t     processed = 0;
+	const float* proc_ptr  = self->p_in;
 
 	while (processed < n_samples) {
-		uint32_t in_chunk_size = self->stretcher->getSamplesRequired();
-		uint32_t samples_left = n_samples-processed;
+		uint32_t in_chunk_size = self->stretcher->getSamplesRequired ();
+		uint32_t samples_left  = n_samples - processed;
 
 		if (samples_left < in_chunk_size) {
 			in_chunk_size = samples_left;
 		}
 
-		self->stretcher->process(&proc_ptr, in_chunk_size, 0);
+		self->stretcher->process (&proc_ptr, in_chunk_size, 0);
 
 		processed += in_chunk_size;
 		proc_ptr += in_chunk_size;
 
-		const uint32_t avail = self->stretcher->available();
-		const uint32_t out_chunk_size = self->stretcher->retrieve(&self->retrieve_buffer, avail);
-		put_to_ring_buffer(self->ring_buffer, self->retrieve_buffer, out_chunk_size);
+		const uint32_t avail          = self->stretcher->available ();
+		const uint32_t out_chunk_size = self->stretcher->retrieve (&self->retrieve_buffer, avail);
+		put_to_ring_buffer (self->ring_buffer, self->retrieve_buffer, out_chunk_size);
 	}
 
-	get_from_ring_buffer(self->ring_buffer, self->p_out, n_samples);
+	get_from_ring_buffer (self->ring_buffer, self->p_out, n_samples);
 }
 
 static void
 cleanup (LV2_Handle instance)
 {
 	RePitch* self = (RePitch*)instance;
-	delete_ring_buffer(self->ring_buffer);
-	free(self->retrieve_buffer);
+	delete_ring_buffer (self->ring_buffer);
+	free (self->retrieve_buffer);
 	delete self->stretcher;
 	free (instance);
 }
@@ -344,20 +342,22 @@ static const LV2_Descriptor descriptor = {
 	extension_data
 };
 
+/* clang-format off */
 #undef LV2_SYMBOL_EXPORT
 #ifdef _WIN32
-#    define LV2_SYMBOL_EXPORT __declspec(dllexport)
+# define LV2_SYMBOL_EXPORT __declspec(dllexport)
 #else
-#    define LV2_SYMBOL_EXPORT  __attribute__ ((visibility ("default")))
+# define LV2_SYMBOL_EXPORT __attribute__ ((visibility ("default")))
 #endif
+/* clang-format on */
 LV2_SYMBOL_EXPORT
 const LV2_Descriptor*
 lv2_descriptor (uint32_t index)
 {
 	switch (index) {
-	case 0:
-		return &descriptor;
-	default:
-		return NULL;
+		case 0:
+			return &descriptor;
+		default:
+			return NULL;
 	}
 }
