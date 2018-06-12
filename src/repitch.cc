@@ -120,19 +120,9 @@ get_from_ring_buffer(RingBuffer* sb, float* dst, size_t len)
 typedef struct {
 	LV2_URID atom_Blank;
 	LV2_URID atom_Object;
-	LV2_URID atom_Sequence;
-	LV2_URID midi_MidiEvent;
 	LV2_URID atom_Float;
-	LV2_URID atom_Int;
-	LV2_URID atom_Long;
 	LV2_URID time_Position;
-	LV2_URID time_bar;
-	LV2_URID time_barBeat;
-	LV2_URID time_beatUnit;
-	LV2_URID time_beatsPerBar;
-	LV2_URID time_beatsPerMinute;
 	LV2_URID time_speed;
-	LV2_URID time_frame;
 } RePitchURIs;
 
 typedef struct {
@@ -148,12 +138,10 @@ typedef struct {
 	LV2_Log_Logger logger;
 
 	/* Host Time */
-	bool     host_info;
 	float    host_bpm;
 	double   bar_beats;
 	float    host_speed;
 	int      host_div;
-	int64_t  host_frame;
 
 	/* Settings */
 	double sample_rate;
@@ -174,19 +162,9 @@ map_uris (LV2_URID_Map* map, RePitchURIs* uris)
 {
 	uris->atom_Blank          = map->map (map->handle, LV2_ATOM__Blank);
 	uris->atom_Object         = map->map (map->handle, LV2_ATOM__Object);
-	uris->midi_MidiEvent      = map->map (map->handle, LV2_MIDI__MidiEvent);
-	uris->atom_Sequence       = map->map (map->handle, LV2_ATOM__Sequence);
 	uris->time_Position       = map->map (map->handle, LV2_TIME__Position);
-	uris->atom_Long           = map->map (map->handle, LV2_ATOM__Long);
-	uris->atom_Int            = map->map (map->handle, LV2_ATOM__Int);
 	uris->atom_Float          = map->map (map->handle, LV2_ATOM__Float);
-	uris->time_bar            = map->map (map->handle, LV2_TIME__bar);
-	uris->time_barBeat        = map->map (map->handle, LV2_TIME__barBeat);
-	uris->time_beatUnit       = map->map (map->handle, LV2_TIME__beatUnit);
-	uris->time_beatsPerBar    = map->map (map->handle, LV2_TIME__beatsPerBar);
-	uris->time_beatsPerMinute = map->map (map->handle, LV2_TIME__beatsPerMinute);
 	uris->time_speed          = map->map (map->handle, LV2_TIME__speed);
-	uris->time_frame          = map->map (map->handle, LV2_TIME__frame);
 }
 
 /**
@@ -198,47 +176,16 @@ update_position (RePitch* self, const LV2_Atom_Object* obj)
 {
 	const RePitchURIs* uris = &self->uris;
 
-	LV2_Atom* bar   = NULL;
-	LV2_Atom* beat  = NULL;
-	LV2_Atom* bunit = NULL;
-	LV2_Atom* bpb   = NULL;
-	LV2_Atom* bpm   = NULL;
 	LV2_Atom* speed = NULL;
-	LV2_Atom* frame = NULL;
 
 	lv2_atom_object_get (
 			obj,
-			uris->time_bar, &bar,
-			uris->time_barBeat, &beat,
-			uris->time_beatUnit, &bunit,
-			uris->time_beatsPerBar, &bpb,
-			uris->time_beatsPerMinute, &bpm,
 			uris->time_speed, &speed,
-			uris->time_frame, &frame,
 			NULL);
 
-	if (   bpm   && bpm->type == uris->atom_Float
-			&& bpb   && bpb->type == uris->atom_Float
-			&& bar   && bar->type == uris->atom_Long
-			&& beat  && beat->type == uris->atom_Float
-			&& bunit && bunit->type == uris->atom_Int
-			&& speed && speed->type == uris->atom_Float
-			&& frame && frame->type == uris->atom_Long)
+	if (speed && speed->type == uris->atom_Float)
 	{
-		float    _bpb   = ((LV2_Atom_Float*)bpb)->body;
-		int64_t  _bar   = ((LV2_Atom_Long*)bar)->body;
-		float    _beat  = ((LV2_Atom_Float*)beat)->body;
-
-		self->host_div   = ((LV2_Atom_Int*)bunit)->body;
-		self->host_bpm   = ((LV2_Atom_Float*)bpm)->body;
 		self->host_speed = ((LV2_Atom_Float*)speed)->body;
-		self->host_frame = ((LV2_Atom_Long*)frame)->body;
-
-		self->bar_beats  = _bar * _bpb + _beat * self->host_div / 4.0;
-		self->host_info  = true;
-		if (self->host_frame < 0) {
-			self->host_info  = false;
-		}
 	}
 }
 
@@ -343,7 +290,9 @@ run (LV2_Handle instance, uint32_t n_samples)
 
 	self->stretcher->setPitchScale (1.0 / speed);
 
+	// TODO report latency, include ringbuffer offset
 	//self->stretcher->getLatency ();
+
 	uint32_t processed = 0;
 	const float* proc_ptr = self->p_in;
 
@@ -366,13 +315,6 @@ run (LV2_Handle instance, uint32_t n_samples)
 	}
 
 	get_from_ring_buffer(self->ring_buffer, self->p_out, n_samples);
-
-	/* keep track of host position.. */
-	if (self->host_info) {
-		self->bar_beats += n_samples * self->host_bpm * self->host_speed / (60.0 * self->sample_rate);
-		self->host_frame += n_samples * self->host_speed;
-	}
-
 }
 
 static void
