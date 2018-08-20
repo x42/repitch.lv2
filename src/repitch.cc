@@ -286,6 +286,17 @@ run (LV2_Handle instance, uint32_t n_samples)
 		speed = 1;
 	}
 
+	if (speed >= 256. || speed <= 1. / 256.) {
+		/* TODO: gracefully handle this, consider ZOH up/downsampling
+		 * and use half the value for setPitchScale().
+		 * Or click-free fade to silence.
+		 * All hope is lost when vari-speeding using extreme speed
+		 * factors anyway.
+		 */
+		memset (self->p_out, 0, n_samples * sizeof (float));
+		return;
+	}
+
 	self->stretcher->setPitchScale (1.0 / speed);
 
 	// TODO report latency, include ringbuffer offset
