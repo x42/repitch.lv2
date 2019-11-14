@@ -122,6 +122,7 @@ typedef struct {
 	LV2_URID atom_Float;
 	LV2_URID time_Position;
 	LV2_URID time_speed;
+	LV2_URID time_scale;
 } RePitchURIs;
 
 typedef struct {
@@ -164,6 +165,7 @@ map_uris (LV2_URID_Map* map, RePitchURIs* uris)
 	uris->time_Position = map->map (map->handle, LV2_TIME__Position);
 	uris->atom_Float    = map->map (map->handle, LV2_ATOM__Float);
 	uris->time_speed    = map->map (map->handle, LV2_TIME__speed);
+	uris->time_scale    = map->map (map->handle, "http://ardour.org/lv2/time#scale"); // XXX
 }
 
 /**
@@ -176,6 +178,16 @@ update_position (RePitch* self, const LV2_Atom_Object* obj)
 	const RePitchURIs* uris = &self->uris;
 
 	LV2_Atom* speed = NULL;
+
+	lv2_atom_object_get (
+	    obj,
+	    uris->time_scale, &speed,
+	    NULL);
+
+	if (speed && speed->type == uris->atom_Float) {
+		self->host_speed = ((LV2_Atom_Float*)speed)->body;
+		return;
+	}
 
 	lv2_atom_object_get (
 	    obj,
