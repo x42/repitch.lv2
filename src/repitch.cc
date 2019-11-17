@@ -69,7 +69,7 @@ delete_ring_buffer (RingBuffer* sb)
 static void
 reset_ring_buffer (RingBuffer* sb)
 {
-	bzero (sb->data, RingBuffer::length * sizeof (float));
+	memset (sb->data, 0, RingBuffer::length * sizeof (float));
 	sb->read_pos  = 0;
 	sb->write_pos = 0;
 }
@@ -270,7 +270,7 @@ activate (LV2_Handle instance)
 	RePitch* self = (RePitch*)instance;
 
 	reset_ring_buffer (self->ring_buffer);
-	bzero (self->retrieve_buffer, RingBuffer::length * sizeof (float));
+	memset (self->retrieve_buffer, 0, RingBuffer::length * sizeof (float));
 }
 
 static void
