@@ -1,76 +1,80 @@
 #!/usr/bin/make -f
-
-# these can be overridden using make variables. e.g.
-#   make CXXFLAGS=-O2
-#   make install DESTDIR=$(CURDIR)/debian/repitch.lv2 PREFIX=/usr
-#
-OPTIMIZATIONS ?= -msse -msse2 -mfpmath=sse -ffast-math -fomit-frame-pointer -O3 -fno-finite-math-only
 PREFIX ?= /usr/local
-CXXFLAGS ?= $(OPTIMIZATIONS) -Wall
-LIBDIR ?= lib
+LV2DIR ?= $(PREFIX)/lib/lv2
 
-STRIP?=strip
-STRIPFLAGS?=-s
+OPTIMIZATIONS ?= -msse -msse2 -mfpmath=sse -ffast-math -fomit-frame-pointer -O3 -fno-finite-math-only -DNDEBUG
+CXXFLAGS ?= $(OPTIMIZATIONS) -Wall
+STRIP ?= strip
 
 repitch_VERSION?=$(shell git describe --tags HEAD 2>/dev/null | sed 's/-g.*$$//;s/^v//' || echo "LV2")
-###############################################################################
-LIB_EXT=.so
 
-LV2DIR ?= $(PREFIX)/$(LIBDIR)/lv2
-LOADLIBES=-lm
+###############################################################################
+BUILDDIR=build/
+
 LV2NAME=repitch
 BUNDLE=repitch.lv2
-BUILDDIR=build/
-targets=
+
+targets =
 
 UNAME=$(shell uname)
 ifeq ($(UNAME),Darwin)
   LV2LDFLAGS=-dynamiclib
   LIB_EXT=.dylib
-  EXTENDED_RE=-E
   STRIPFLAGS=-u -r -arch all -s lv2syms
   targets+=lv2syms
+  EXTENDED_RE=-E
 else
   LV2LDFLAGS=-Wl,-Bstatic -Wl,-Bdynamic
   LIB_EXT=.so
+  STRIPFLAGS=-s
   EXTENDED_RE=-r
 endif
 
 ifneq ($(XWIN),)
   CC=$(XWIN)-gcc
+  CXX=$(XWIN)-g++
   STRIP=$(XWIN)-strip
   LV2LDFLAGS=-Wl,-Bstatic -Wl,-Bdynamic -Wl,--as-needed
   LIB_EXT=.dll
   override LDFLAGS += -static-libgcc -static-libstdc++
+else
+  override CXXFLAGS += -fPIC
 endif
 
-targets+=$(BUILDDIR)$(LV2NAME)$(LIB_EXT)
+targets += $(BUILDDIR)$(LV2NAME)$(LIB_EXT)
+override CXXFLAGS += -fvisibility=hidden
 
 ###############################################################################
 # extract versions
 LV2VERSION=$(repitch_VERSION)
 include git2lv2.mk
 
+###############################################################################
 # check for build-dependencies
+
 ifeq ($(shell pkg-config --exists lv2 || echo no), no)
   $(error "LV2 SDK was not found")
 endif
 
-# check for build-dependencies
+ifeq ($(shell pkg-config --atleast-version=1.4 lv2 || echo no), no)
+  $(error "LV2 SDK needs to be version 1.4 or later")
+endif
+
 ifeq ($(shell pkg-config --exists rubberband || echo no), no)
 	$(error "rubberband SDK (https://breakfastquay.com/rubberband) was not found")
 endif
+
+override CXXFLAGS += `pkg-config --cflags lv2 rubberband`
+override LOADLIBES += `pkg-config --libs rubberband` -lm
 
 # check for lv2_atom_forge_object  new in 1.8.1 deprecates lv2_atom_forge_blank
 ifeq ($(shell pkg-config --atleast-version=1.8.1 lv2 && echo yes), yes)
   override CXXFLAGS += -DHAVE_LV2_1_8
 endif
 
-override CXXFLAGS += -fPIC
-override CXXFLAGS += `pkg-config --cflags lv2 rubberband`
-override LOADLIBES += `pkg-config --libs rubberband`
-
+###############################################################################
 # build target definitions
+
 default: all
 
 all: $(BUILDDIR)manifest.ttl $(BUILDDIR)$(LV2NAME).ttl $(targets)
@@ -107,7 +111,12 @@ uninstall:
 	-rmdir $(DESTDIR)$(LV2DIR)/$(BUNDLE)
 
 clean:
-	rm -f $(BUILDDIR)manifest.ttl $(BUILDDIR)$(LV2NAME).ttl $(BUILDDIR)$(LV2NAME)$(LIB_EXT) lv2syms
+	rm -f \
+		$(BUILDDIR)manifest.ttl \
+		$(BUILDDIR)$(LV2NAME).ttl \
+		$(BUILDDIR)$(LV2NAME)$(LIB_EXT) \
+		lv2syms
+	rm -rf $(BUILDDIR)*.dSYM
 	-test -d $(BUILDDIR) && rmdir $(BUILDDIR) || true
 
 distclean: clean
