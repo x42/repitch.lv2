@@ -4,6 +4,7 @@ LV2DIR ?= $(PREFIX)/lib/lv2
 
 OPTIMIZATIONS ?= -msse -msse2 -mfpmath=sse -ffast-math -fomit-frame-pointer -O3 -fno-finite-math-only -DNDEBUG
 CXXFLAGS ?= $(OPTIMIZATIONS) -Wall
+PKG_CONFIG ?= pkg-config
 STRIP ?= strip
 
 repitch_VERSION?=$(shell git describe --tags HEAD 2>/dev/null | sed 's/-g.*$$//;s/^v//' || echo "LV2")
@@ -52,23 +53,23 @@ include git2lv2.mk
 ###############################################################################
 # check for build-dependencies
 
-ifeq ($(shell pkg-config --exists lv2 || echo no), no)
+ifeq ($(shell $(PKG_CONFIG) --exists lv2 || echo no), no)
   $(error "LV2 SDK was not found")
 endif
 
-ifeq ($(shell pkg-config --atleast-version=1.4 lv2 || echo no), no)
+ifeq ($(shell $(PKG_CONFIG) --atleast-version=1.4 lv2 || echo no), no)
   $(error "LV2 SDK needs to be version 1.4 or later")
 endif
 
-ifeq ($(shell pkg-config --exists rubberband || echo no), no)
+ifeq ($(shell $(PKG_CONFIG) --exists rubberband || echo no), no)
 	$(error "rubberband SDK (https://breakfastquay.com/rubberband) was not found")
 endif
 
-override CXXFLAGS += `pkg-config --cflags lv2 rubberband`
-override LOADLIBES += `pkg-config --libs rubberband` -lm
+override CXXFLAGS += `$(PKG_CONFIG) --cflags lv2 rubberband`
+override LOADLIBES += `$(PKG_CONFIG) --libs rubberband` -lm
 
 # check for lv2_atom_forge_object  new in 1.8.1 deprecates lv2_atom_forge_blank
-ifeq ($(shell pkg-config --atleast-version=1.8.1 lv2 && echo yes), yes)
+ifeq ($(shell $(PKG_CONFIG) --atleast-version=1.8.1 lv2 && echo yes), yes)
   override CXXFLAGS += -DHAVE_LV2_1_8
 endif
 
